@@ -15,9 +15,9 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
 
     const [requiredMorning, setRequiredMorning] = useState(5);
     const [requiredAfternoon, setRequiredAfternoon] = useState(4);
-    const [requiredNight, setRequiredNight] = useState(3);
+    const [requiredNight, setRequiredNight] = useState(4);
     const [maxConsecShiftsWorked, setMaxConsecShiftsWorked] = useState(6);
-    const [targetOff, setTargetOff] = useState(8);
+    const [targetOff, setTargetOff] = useState(6);
 
     useEffect(() => {
         const newMap = {};

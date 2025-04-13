@@ -1,7 +1,7 @@
 // App.js
 
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, writeBatch, query, orderBy } from 'firebase/firestore';
 import { db } from './firebase';
 import axios from 'axios';
 import './App.css';
@@ -9,6 +9,53 @@ import NurseForm from './components/NurseForm';
 import ScheduleGenerator from './components/ScheduleGenerator';
 import ScheduleDisplay from './components/ScheduleDisplay';
 import ErrorPopup from './components/ErrorPopup';
+import {
+    DndContext,
+    closestCenter,
+    KeyboardSensor,
+    PointerSensor,
+    useSensor,
+    useSensors,
+} from '@dnd-kit/core';
+import {
+    arrayMove,
+    SortableContext,
+    sortableKeyboardCoordinates,
+    verticalListSortingStrategy,
+    useSortable
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+function SortableNurseItem({ id, nurse, handleEditNurse, deleteNurse, isEditing, editingNurse }) {
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        transition,
+        isDragging
+    } = useSortable({ id });
+
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.8 : 1,
+        cursor: 'move',
+
+    };
+
+    return (
+        <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="nurse-item">
+            <span>{`${nurse.prefix ?? ''} ${nurse.firstName ?? ''} ${nurse.lastName ?? ''}`.trim()}</span>
+            <div className="nurse-actions">
+
+                <button onPointerDown={(e) => e.stopPropagation()} onClick={() => handleEditNurse(nurse)} disabled={isEditing && editingNurse?.id === nurse.id}>แก้ไข</button>
+                <button onPointerDown={(e) => e.stopPropagation()} onClick={() => deleteNurse(nurse.id)} className='danger-button'>ลบ</button>
+            </div>
+        </div>
+    );
+}
+
 
 function App() {
     const [nurses, setNurses] = useState([]);
@@ -20,6 +67,15 @@ function App() {
     const [editingNurse, setEditingNurse] = useState(null);
     const [isEditing, setIsEditing] = useState(false);
     const [lastUsedTimeLimit, setLastUsedTimeLimit] = useState(60);
+
+
+    const sensors = useSensors(
+        useSensor(PointerSensor),
+        useSensor(KeyboardSensor, {
+            coordinateGetter: sortableKeyboardCoordinates,
+        })
+    );
+
 
     useEffect(() => {
         fetchNurses();
@@ -34,12 +90,74 @@ function App() {
         setLoading(true);
         setErrorPopupMessage(null);
         try {
-            const querySnapshot = await getDocs(collection(db, 'nurses'));
-            const list = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-            setNurses(list);
+            const q = query(collection(db, 'nurses'), orderBy("order", "asc"));
+            const querySnapshot = await getDocs(q);
+            let needsUpdate = false;
+            let maxOrder = -1;
+            const list = querySnapshot.docs.map((d, index) => {
+                const data = d.data();
+
+                if (data.order === undefined || data.order === null) {
+                    needsUpdate = true;
+                    data.order = index;
+                }
+                 maxOrder = Math.max(maxOrder, data.order);
+                return { id: d.id, ...data };
+            });
+
+
+            if (needsUpdate || list.some((n, i) => n.order !== i)) {
+                console.log("Order mismatch or missing, re-ordering in DB...");
+                const batch = writeBatch(db);
+                const sortedList = list.sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
+                sortedList.forEach((nurse, index) => {
+                     nurse.order = index;
+                     const nurseRef = doc(db, 'nurses', nurse.id);
+                     batch.update(nurseRef, { order: index });
+                 });
+                await batch.commit();
+                 setNurses(sortedList);
+                 console.log("Re-ordering complete.");
+            } else {
+                setNurses(list);
+            }
+
             console.log("Fetched nurses:", list.length);
         } catch (e) {
             showErrorPopup(`โหลดข้อมูลพยาบาลไม่ได้: ${e.message || e}`);
+
+             if (e.code === 'failed-precondition') {
+                 console.warn("Order index likely missing, fetching without ordering and will attempt re-order.");
+                try {
+                    const querySnapshot = await getDocs(collection(db, 'nurses'));
+                     const list = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+                     const sortedByName = list.sort((a, b) => `${a?.firstName ?? ''} ${a?.lastName ?? ''}`.localeCompare(`${b?.firstName ?? ''} ${b?.lastName ?? ''}`, 'th'))
+                    const batch = writeBatch(db);
+                     let orderUpdated = false;
+                    sortedByName.forEach((nurse, index) => {
+                         if (nurse.order === undefined || nurse.order === null) {
+                             nurse.order = index;
+                             const nurseRef = doc(db, 'nurses', nurse.id);
+                             batch.update(nurseRef, { order: index });
+                            orderUpdated = true;
+                         }
+                     });
+                    if (orderUpdated) {
+                        console.log("Applying initial order based on name sort.");
+                        await batch.commit();
+                    }
+                    setNurses(sortedByName.sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity)));
+
+                } catch (fallbackError) {
+                    showErrorPopup(`โหลดข้อมูลพยาบาลไม่ได้ และเกิดข้อผิดพลาดในการสร้าง order เริ่มต้น: ${fallbackError.message || fallbackError}`);
+                     setNurses([]);
+                }
+
+            } else {
+                 showErrorPopup(`โหลดข้อมูลพยาบาลไม่ได้: ${e.message || e}`);
+                 setNurses([]);
+             }
         } finally {
             setLoading(false);
         }
@@ -55,7 +173,13 @@ function App() {
                 alert(`พยาบาล ${nurseData.firstName} ${nurseData.lastName} มีอยู่ในระบบแล้ว`);
                 return false;
             }
-            const dataToAdd = { ...nurseData, constraints: nurseData.constraints || [] };
+
+            const nextOrder = nurses.length > 0 ? Math.max(...nurses.map(n => n.order ?? -1)) + 1 : 0;
+            const dataToAdd = {
+                 ...nurseData,
+                 constraints: nurseData.constraints || [],
+                 order: nextOrder
+            };
             await addDoc(collection(db, 'nurses'), dataToAdd);
             fetchNurses();
             return true;
@@ -72,9 +196,24 @@ function App() {
             return false;
         }
         try {
-            const data = { ...dataToUpdate, constraints: dataToUpdate.constraints || [] };
+
+            const existingNurse = nurses.find(n => n.id === id);
+            const currentOrder = existingNurse?.order;
+            const data = {
+                ...dataToUpdate,
+                constraints: dataToUpdate.constraints || []
+            };
+
+            if (currentOrder !== undefined && data.order === undefined) {
+                data.order = currentOrder;
+            }
             await updateDoc(doc(db, 'nurses', id), data);
-            await fetchNurses();
+
+            setNurses(prevNurses =>
+                 prevNurses.map(n => n.id === id ? { ...n, ...data } : n).sort((a,b) => (a.order ?? Infinity) - (b.order ?? Infinity))
+             );
+
+
             return true;
         } catch (e) {
             showErrorPopup(`อัปเดตข้อมูลพยาบาลไม่ได้: ${e.message || e}`);
@@ -84,14 +223,16 @@ function App() {
 
     const deleteNurse = async (id) => {
         setErrorPopupMessage(null);
-         if (!id) {
-             showErrorPopup("เกิดข้อผิดพลาด: ไม่พบ ID ของพยาบาลที่จะลบ");
-             return;
-         }
+        if (!id) {
+            showErrorPopup("เกิดข้อผิดพลาด: ไม่พบ ID ของพยาบาลที่จะลบ");
+            return;
+        }
         if (window.confirm('ยืนยันการลบข้อมูลพยาบาลท่านนี้? การดำเนินการนี้ไม่สามารถย้อนกลับได้')) {
             try {
                 await deleteDoc(doc(db, 'nurses', id));
-                fetchNurses();
+
+                setNurses(prevNurses => prevNurses.filter(nurse => nurse.id !== id));
+
                 if (editingNurse?.id === id) {
                     handleCancelEdit();
                 }
@@ -144,11 +285,12 @@ function App() {
             setIsGenerating(false);
             return;
         }
-        if (typeof scheduleParams?.targetOffDays !== 'number' || scheduleParams.targetOffDays < 0) {
-            showErrorPopup("ไม่สามารถสร้างตารางได้: ข้อมูลวันหยุดขั้นต่ำไม่ถูกต้อง หรือไม่ได้ระบุ");
+         if (typeof scheduleParams?.targetOffDays !== 'number' || scheduleParams.targetOffDays < 0) {
+             showErrorPopup("ไม่สามารถสร้างตารางได้: ข้อมูลวันหยุดขั้นต่ำไม่ถูกต้อง หรือไม่ได้ระบุ");
             setIsGenerating(false);
             return;
         }
+
 
         setLastUsedTimeLimit(scheduleParams.solverTimeLimit || 60);
 
@@ -161,8 +303,16 @@ function App() {
             return;
         }
 
+
         const payload = {
-            nurses: nurses,
+            nurses: nurses.map(n => ({
+                id: n.id,
+                prefix: n.prefix,
+                firstName: n.firstName,
+                lastName: n.lastName,
+                constraints: n.constraints || [],
+
+            })),
             schedule: {
                 startDate: localStartDateStr,
                 endDate: localEndDateStr,
@@ -171,7 +321,7 @@ function App() {
             requiredNursesMorning: scheduleParams.requiredNursesMorning,
             requiredNursesAfternoon: scheduleParams.requiredNursesAfternoon,
             requiredNursesNight: scheduleParams.requiredNursesNight,
-            maxConsecutiveShifts: scheduleParams.maxConsecutiveShifts,
+            maxConsecutiveShiftsWorked: scheduleParams.maxConsecutiveShiftsWorked,
             targetOffDays: scheduleParams.targetOffDays,
             solverTimeLimit: scheduleParams.solverTimeLimit
         };
@@ -212,6 +362,40 @@ function App() {
         }
     };
 
+
+    const handleDragEnd = async (event) => {
+        const { active, over } = event;
+
+        if (active && over && active.id !== over.id) {
+            const oldIndex = nurses.findIndex((nurse) => nurse.id === active.id);
+            const newIndex = nurses.findIndex((nurse) => nurse.id === over.id);
+
+            if (oldIndex === -1 || newIndex === -1) return;
+
+            const newlyOrderedNurses = arrayMove(nurses, oldIndex, newIndex);
+
+
+            setNurses(newlyOrderedNurses);
+
+
+            const batch = writeBatch(db);
+            newlyOrderedNurses.forEach((nurse, index) => {
+                const nurseRef = doc(db, 'nurses', nurse.id);
+                batch.update(nurseRef, { order: index });
+            });
+
+            try {
+                await batch.commit();
+                console.log("Nurse order updated in Firestore.");
+            } catch (error) {
+                showErrorPopup(`ไม่สามารถบันทึกการเรียงลำดับได้: ${error.message}`);
+
+                 fetchNurses();
+            }
+        }
+    };
+
+
     return (
         <div className="App">
             <ErrorPopup
@@ -220,7 +404,7 @@ function App() {
             />
 
             <header className="App-header">
-                <h1><span role="img" aria-label="nurse-female">👩‍⚕️</span><span role="img" aria-label="calendar">🗓️</span> ระบบจัดการตารางเวรพยาบาล</h1>
+                 <h1><span role="img" aria-label="nurse-female">👩‍⚕️</span><span role="img" aria-label="calendar">🗓️</span> ระบบจัดการตารางเวรพยาบาล</h1>
                 <div className="tabs">
                     <button
                         className={selectedTab === 'nurses' ? 'active' : ''}
@@ -259,21 +443,33 @@ function App() {
                             onCancelEdit={handleCancelEdit}
                         />
                         <div className="nurse-list card">
-                            <h2>รายชื่อพยาบาล <span className="badge">{nurses.length}</span></h2>
+                             <h2>รายชื่อพยาบาล <span className="badge">{nurses.length}</span></h2>
                             {nurses.length === 0 && !loading ? (
                                 <div className="empty-state"><p>ยังไม่มีข้อมูลพยาบาลในระบบ</p></div>
                             ) : (
-                                nurses
-                                .sort((a, b) => `${a?.firstName ?? ''} ${a?.lastName ?? ''}`.localeCompare(`${b?.firstName ?? ''} ${b?.lastName ?? ''}`, 'th'))
-                                .map(nurse => (
-                                    <div key={nurse.id} className="nurse-item">
-                                        <span>{`${nurse.prefix ?? ''} ${nurse.firstName ?? ''} ${nurse.lastName ?? ''}`.trim()}</span>
-                                        <div className="nurse-actions">
-                                            <button onClick={() => handleEditNurse(nurse)} disabled={isEditing && editingNurse?.id === nurse.id}>แก้ไข</button>
-                                            <button onClick={() => deleteNurse(nurse.id)} className='danger-button'>ลบ</button>
-                                        </div>
-                                    </div>
-                                ))
+                                <DndContext
+                                    sensors={sensors}
+                                    collisionDetection={closestCenter}
+                                    onDragEnd={handleDragEnd}
+                                >
+                                    <SortableContext
+                                        items={nurses.map(n => n.id)}
+                                        strategy={verticalListSortingStrategy}
+                                    >
+
+                                        {nurses.map(nurse => (
+                                             <SortableNurseItem
+                                                 key={nurse.id}
+                                                 id={nurse.id}
+                                                 nurse={nurse}
+                                                 handleEditNurse={handleEditNurse}
+                                                 deleteNurse={deleteNurse}
+                                                 isEditing={isEditing}
+                                                 editingNurse={editingNurse}
+                                             />
+                                        ))}
+                                    </SortableContext>
+                                </DndContext>
                             )}
                         </div>
                     </div>
@@ -281,17 +477,17 @@ function App() {
 
                 {selectedTab === 'generate' && !isGenerating && (
                      <ScheduleGenerator
-                        nurses={nurses}
-                        onGenerateSchedule={generateSchedule}
-                        updateNurse={updateNurse}
-                    />
+                         nurses={nurses}
+                         onGenerateSchedule={generateSchedule}
+                         updateNurse={updateNurse}
+                     />
                 )}
 
                 {selectedTab === 'view' && !isGenerating && (
                      generatedSchedule ? (
                         <ScheduleDisplay
-                            schedule={generatedSchedule}
-                            nurses={nurses}
+                             schedule={generatedSchedule}
+                             nurses={nurses}
                         />
                     ) : (
                         <div className="card empty-state">

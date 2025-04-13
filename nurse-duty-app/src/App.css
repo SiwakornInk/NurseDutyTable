@@ -877,3 +877,12 @@ button:disabled {
   background-color: var(--gray-400);
   cursor: not-allowed;
 }
+
+.nurse-item {
+  cursor: grab;
+  user-select: none;
+}
+
+.nurse-item:active {
+    cursor: grabbing;
+}
