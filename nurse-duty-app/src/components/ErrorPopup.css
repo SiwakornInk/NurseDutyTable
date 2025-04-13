@@ -1,0 +1,113 @@
+/* src/components/ErrorPopup.css */
+
+.popup-overlay {
+    position: fixed; /* อยู่กับที่ ไม่เลื่อนตามหน้าเว็บ */
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.6); /* พื้นหลังสีดำโปร่งแสง */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000; /* อยู่เหนือสุด */
+    opacity: 0; /* เริ่มต้นซ่อนไว้ */
+    animation: fadeIn 0.3s forwards; /* animation ให้ค่อยๆ ปรากฏ */
+  }
+  
+  .popup-content {
+    background: white;
+    padding: 0; /* ลบ padding เดิม ให้ header/body/footer จัดการ */
+    border-radius: 8px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    max-width: 450px; /* จำกัดความกว้างสูงสุด */
+    width: 90%; /* ความกว้างสำหรับจอเล็ก */
+    text-align: left; /* จัดข้อความชิดซ้าย */
+    transform: scale(0.9); /* เริ่มต้นเล็กน้อย */
+    animation: scaleUp 0.3s 0.1s forwards; /* animation ให้ขยายขึ้น */
+    overflow: hidden; /* ป้องกัน content ล้น border-radius */
+  }
+  
+  .popup-header {
+    background-color: #f8d7da; /* สีพื้นหลัง header แบบ error */
+    color: #721c24; /* สีข้อความ header */
+    padding: 15px 20px;
+    border-bottom: 1px solid #f5c6cb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .popup-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+  }
+  
+  .popup-header h3 span {
+    margin-right: 8px;
+  }
+  
+  .close-button {
+    background: none;
+    border: none;
+    font-size: 1.8rem;
+    line-height: 1;
+    color: #721c24;
+    cursor: pointer;
+    padding: 0 5px;
+    opacity: 0.7;
+  }
+  .close-button:hover {
+      opacity: 1;
+  }
+  
+  
+  .popup-body {
+    padding: 20px 25px;
+    color: #333;
+    line-height: 1.6;
+  }
+  
+  .popup-body p {
+      margin: 0;
+      word-wrap: break-word; /* ตัดคำเมื่อยาวเกินไป */
+  }
+  
+  
+  .popup-footer {
+    padding: 15px 20px;
+    text-align: right;
+    border-top: 1px solid #eee;
+    background-color: #f9f9f9;
+  }
+  
+  .ok-button {
+    background-color: #dc3545; /* สีแดง bootstrap danger */
+    color: white;
+    border: none;
+    padding: 8px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.95rem;
+    transition: background-color 0.2s ease;
+  }
+  
+  .ok-button:hover {
+    background-color: #c82333; /* สีแดงเข้มขึ้น */
+  }
+  
+  
+  /* Animations */
+  @keyframes fadeIn {
+    to {
+      opacity: 1;
+    }
+  }
+  
+  @keyframes scaleUp {
+    to {
+      transform: scale(1);
+    }
+  }
