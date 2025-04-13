@@ -1,7 +1,8 @@
+// firebase.js
+
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
-// กำหนด Prefix ให้ตรงกับในไฟล์ .env (REACT_APP_ หรือ NEXT_PUBLIC_)
 const prefix = process.env.NEXT_PUBLIC_FIREBASE_API_KEY ? 'NEXT_PUBLIC_' : 'REACT_APP_';
 const firebaseConfig = {
   apiKey: process.env[`${prefix}FIREBASE_API_KEY`],
@@ -13,7 +14,6 @@ const firebaseConfig = {
   measurementId: process.env[`${prefix}FIREBASE_MEASUREMENT_ID`]
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 

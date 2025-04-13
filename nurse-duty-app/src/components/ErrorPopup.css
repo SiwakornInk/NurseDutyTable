@@ -1,36 +1,36 @@
-/* src/components/ErrorPopup.css */
+/* ErrorPopup.css */
 
 .popup-overlay {
-    position: fixed; /* อยู่กับที่ ไม่เลื่อนตามหน้าเว็บ */
+    position: fixed;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.6); /* พื้นหลังสีดำโปร่งแสง */
+    background-color: rgba(0, 0, 0, 0.6);
     display: flex;
     justify-content: center;
     align-items: center;
-    z-index: 1000; /* อยู่เหนือสุด */
-    opacity: 0; /* เริ่มต้นซ่อนไว้ */
-    animation: fadeIn 0.3s forwards; /* animation ให้ค่อยๆ ปรากฏ */
+    z-index: 1000;
+    opacity: 0;
+    animation: fadeIn 0.3s forwards;
   }
   
   .popup-content {
     background: white;
-    padding: 0; /* ลบ padding เดิม ให้ header/body/footer จัดการ */
+    padding: 0;
     border-radius: 8px;
     box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-    max-width: 450px; /* จำกัดความกว้างสูงสุด */
-    width: 90%; /* ความกว้างสำหรับจอเล็ก */
-    text-align: left; /* จัดข้อความชิดซ้าย */
-    transform: scale(0.9); /* เริ่มต้นเล็กน้อย */
-    animation: scaleUp 0.3s 0.1s forwards; /* animation ให้ขยายขึ้น */
-    overflow: hidden; /* ป้องกัน content ล้น border-radius */
+    max-width: 450px;
+    width: 90%;
+    text-align: left;
+    transform: scale(0.9);
+    animation: scaleUp 0.3s 0.1s forwards;
+    overflow: hidden;
   }
   
   .popup-header {
-    background-color: #f8d7da; /* สีพื้นหลัง header แบบ error */
-    color: #721c24; /* สีข้อความ header */
+    background-color: #f8d7da;
+    color: #721c24;
     padding: 15px 20px;
     border-bottom: 1px solid #f5c6cb;
     display: flex;
@@ -72,7 +72,7 @@
   
   .popup-body p {
       margin: 0;
-      word-wrap: break-word; /* ตัดคำเมื่อยาวเกินไป */
+      word-wrap: break-word;
   }
   
   
@@ -84,7 +84,7 @@
   }
   
   .ok-button {
-    background-color: #dc3545; /* สีแดง bootstrap danger */
+    background-color: #dc3545;
     color: white;
     border: none;
     padding: 8px 20px;
@@ -95,7 +95,7 @@
   }
   
   .ok-button:hover {
-    background-color: #c82333; /* สีแดงเข้มขึ้น */
+    background-color: #c82333;
   }
   
   

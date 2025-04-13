@@ -1,4 +1,5 @@
-// components/NurseForm.js
+// NurseForm.js
+
 import React, { useState, useEffect } from 'react';
 
 const NurseForm = ({ addNurse, updateNurse, nurseToEdit, isEditing, onCancelEdit }) => {
