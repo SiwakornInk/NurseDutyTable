@@ -1,77 +1,50 @@
 // ScheduleDisplay.js
-import React from 'react';
+import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
-
+import { getThaiMonth, getThaiDayOfWeek, getDaysArrayFromStrings, getDisplayDateInfo } from '../utils/dateUtils';
 
 const SHIFT_MORNING = 1;
 const SHIFT_AFTERNOON = 2;
 const SHIFT_NIGHT = 3;
 
 
-const getThaiMonth = (monthIndex) => {
-    const thaiMonths = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
-    if (typeof monthIndex === 'number' && monthIndex >= 0 && monthIndex <= 11) {
-        return thaiMonths[monthIndex];
-    }
-    const monthNum = parseInt(monthIndex, 10);
-     if (!isNaN(monthNum) && monthNum >= 0 && monthNum <= 11) {
-         console.warn("getThaiMonth received non-standard number:", monthIndex);
-         return thaiMonths[monthNum];
-     }
-    console.error("Invalid month index received by getThaiMonth:", monthIndex);
-    return "??";
-};
+const ScheduleDisplay = ({ schedule, nurses, onSaveSchedule, isHistoryView = false, isSaveDisabled = false }) => {
+    const [isSaving, setIsSaving] = useState(false);
+    const [saveSuccess, setSaveSuccess] = useState(false);
+    const [saveError, setSaveError] = useState(null);
 
-const getThaiDayOfWeek = (date) => {
-    if (!(date instanceof Date) || isNaN(date.getTime())) {
-        return "?";
-    }
-    const thaiDays = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
-    return thaiDays[date.getDay()];
-};
-
-const getDaysArrayFromStrings = (dayStrings) => {
-    if (!Array.isArray(dayStrings)) return [];
-    return dayStrings.map(ds => {
+    const handleSaveClick = async () => {
+        if (!onSaveSchedule || !schedule || isHistoryView || isSaveDisabled) return;
+        setIsSaving(true);
+        setSaveSuccess(false);
+        setSaveError(null);
         try {
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(ds)) {
-                 throw new Error(`Invalid date string format: "${ds}"`);
+            const result = await onSaveSchedule();
+
+            if (result && result.success) {
+                setSaveSuccess(true);
+                setTimeout(() => setSaveSuccess(false), 4000);
+            } else if (result && result.error) {
+
+                 setSaveError(result.error);
+                 setTimeout(() => setSaveError(null), 6000);
             }
+             else {
 
-            const date = new Date(ds + 'T00:00:00Z');
-            if (isNaN(date.getTime())) throw new Error(`Invalid Date created from "${ds}"`);
-            return date;
-        } catch (e) {
-            console.error(`Error parsing date string "${ds}":`, e);
-            return null;
+                throw new Error("Save operation returned unexpected result or failed silently.");
+            }
+        } catch (err) {
+            console.error("Error saving schedule:", err);
+            setSaveError(err.message || "ไม่สามารถบันทึกตารางเวรได้");
+            setTimeout(() => setSaveError(null), 5000);
+        } finally {
+            setIsSaving(false);
         }
-    }).filter(d => d instanceof Date);
-};
+    };
 
-const getDisplayDateInfo = (dateString) => {
-    if (!dateString || typeof dateString !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
-        console.error("Invalid dateString format received:", dateString);
-        return { monthIndex: NaN, year: NaN };
-    }
-    try {
-        const parts = dateString.split('-');
-        const year = parseInt(parts[0], 10);
-        const monthIndex = parseInt(parts[1], 10) - 1;
-        if (isNaN(year) || isNaN(monthIndex) || monthIndex < 0 || monthIndex > 11) {
-             console.error("Parsed date parts are invalid:", { year, monthIndex });
-             return { monthIndex: NaN, year: NaN };
-        }
-        return { monthIndex, year };
-    } catch (e) {
-         console.error("Error parsing date string:", dateString, e);
-         return { monthIndex: NaN, year: NaN };
-    }
-};
-
-
-const ScheduleDisplay = ({ schedule, nurses }) => {
 
     const handleDownloadExcel = () => {
+
         if (!schedule || !schedule.nurseSchedules || !schedule.shiftsCount || !schedule.days || schedule.days.length === 0) {
             alert("ไม่มีข้อมูลตารางเวรสำหรับดาวน์โหลด");
             return;
@@ -86,7 +59,6 @@ const ScheduleDisplay = ({ schedule, nurses }) => {
         const headerRow1 = ['ชื่อ-สกุล'];
         const headerRow2 = [''];
         daysAsDates.forEach(day => {
-
              headerRow1.push(day.getUTCDate().toString());
              headerRow2.push(getThaiDayOfWeek(day));
         });
@@ -100,7 +72,6 @@ const ScheduleDisplay = ({ schedule, nurses }) => {
         nurses.forEach(nurse => {
              const nurseId = nurse.id;
              const nurseSchedule = schedule.nurseSchedules[nurseId];
-
 
              if (!nurseSchedule || !nurseSchedule.nurse?.id) {
                  console.warn(`Skipping Excel row: missing schedule data for nurse ID ${nurseId}`);
@@ -147,7 +118,6 @@ const ScheduleDisplay = ({ schedule, nurses }) => {
             wb = XLSX.utils.book_new();
             ws = XLSX.utils.aoa_to_sheet(wsData);
             if (!ws) throw new Error("Worksheet creation failed.");
-
              const colWidths = wsData[0].map((_, i) => ({ wch: wsData.reduce((max, row) => Math.max(max, String(row[i] ?? '').length), i === 0 ? 25 : 8) }));
              if (colWidths.length > 0) colWidths[0].wch = Math.max(25, colWidths[0].wch);
             ws['!cols'] = colWidths;
@@ -193,11 +163,12 @@ const ScheduleDisplay = ({ schedule, nurses }) => {
     const dateInfoValid = !isNaN(displayMonthIndex) && !isNaN(displayYear);
 
     const totalNADoubles = schedule?.fairnessReport?.totalNADoubles ?? 'N/A';
-
+    const scheduleTitle = isHistoryView ? "ประวัติตารางเวร" : "ตารางเวรพยาบาล";
+    const saveButtonText = isSaveDisabled ? 'มีข้อมูลเดือนนี้แล้ว' : (saveSuccess ? 'บันทึกแล้ว ✅' : '💾 บันทึกตารางนี้');
 
     return (
         <div className="schedule-display card">
-            <h2><span role="img" aria-label="schedule">📋</span> ตารางเวรพยาบาล</h2>
+            <h2><span role="img" aria-label={isHistoryView ? "history" : "schedule"}> {isHistoryView ? '📜': '📋'} </span> {scheduleTitle}</h2>
 
             <div className="schedule-info">
                 {dateInfoValid ? (
@@ -212,7 +183,6 @@ const ScheduleDisplay = ({ schedule, nurses }) => {
             </div>
 
             <div className="shift-legend">
-
                  <div style={{ display: 'flex', alignItems: 'center' }}><span className="shift-color shift-morning"></span> ช (เช้า)</div>
                  <div style={{ display: 'flex', alignItems: 'center' }}><span className="shift-color shift-afternoon"></span> บ (บ่าย)</div>
                  <div style={{ display: 'flex', alignItems: 'center' }}><span className="shift-color shift-night"></span> ด (ดึก)</div>
@@ -222,21 +192,17 @@ const ScheduleDisplay = ({ schedule, nurses }) => {
             </div>
 
             <div className="table-container">
-
                  <table className="schedule-table" style={{ minWidth: `calc(${35 * (schedule.days.length)}px + 180px + 270px)` }}>
                     <thead>
                         <tr>
-
                              <th rowSpan="2" style={{ minWidth: '180px', textAlign: 'left', paddingLeft: '5px', verticalAlign: 'middle', position: 'sticky', left: 0, backgroundColor: 'var(--table-header-bg, #f8f9fa)', zIndex: 1 }}>ชื่อ-สกุล</th>
                             {datesValidForRender ? daysAsDatesForRender.map((day, index) => {
-
                                  const isHoliday = Array.isArray(schedule.holidays) && schedule.holidays.includes(day.getUTCDate());
                                 return <th key={`h-d-${index}`} className={isHoliday ? 'holiday' : ''} style={{ minWidth: '35px', textAlign: 'center' }}>{day.getUTCDate()}</th>;
                             }) : <th colSpan={schedule.days.length}>Error dates</th>}
                              <th colSpan="6" rowSpan="1" style={{ verticalAlign: 'middle', textAlign: 'center' }}>รวม</th>
                         </tr>
                         <tr>
-
                              {datesValidForRender ? daysAsDatesForRender.map((day, index) => {
                                  const isHoliday = Array.isArray(schedule.holidays) && schedule.holidays.includes(day.getUTCDate());
                                  return <th key={`h-dow-${index}`} className={isHoliday ? 'holiday' : ''} style={{ minWidth: '35px', textAlign: 'center', fontWeight: 'normal' }}>{getThaiDayOfWeek(day)}</th>;
@@ -250,12 +216,10 @@ const ScheduleDisplay = ({ schedule, nurses }) => {
                         </tr>
                     </thead>
                     <tbody>
-
                          {nurses.map((nurse) => {
                              const nurseId = nurse.id;
                              const nurseSchedule = schedule.nurseSchedules[nurseId];
                              const counts = schedule.shiftsCount[nurseId];
-
 
                              if (!nurseSchedule || !counts) {
                                  console.warn(`Missing schedule data or counts for nurse ${nurseId}`);
@@ -300,7 +264,6 @@ const ScheduleDisplay = ({ schedule, nurses }) => {
                                                  shiftText = 'ด';
                                                  cellClassName = 'shift-night';
                                              } else {
-
                                                  shiftText = shifts.join(',');
                                                  cellClassName = '';
                                              }
@@ -322,11 +285,24 @@ const ScheduleDisplay = ({ schedule, nurses }) => {
                 </table>
             </div>
 
-            <div className="download-options">
-                <button className="download-button" onClick={handleDownloadExcel} disabled={!schedule}>
-                    <span role="img" aria-label="download">💾</span> ดาวน์โหลด Excel
-                </button>
-            </div>
+             <div className="download-options" style={{ marginTop: '20px', display: 'flex', justifyContent: 'center', gap: '15px', flexWrap: 'wrap' }}>
+                 <button className="download-button" onClick={handleDownloadExcel} disabled={!schedule}>
+                     <span role="img" aria-label="download">💾</span> ดาวน์โหลด Excel
+                 </button>
+                 {!isHistoryView && onSaveSchedule && (
+                     <button
+                         className="primary-button"
+                         onClick={handleSaveClick}
+                         disabled={!schedule || isSaving || saveSuccess || isSaveDisabled}
+                         style={{ minWidth: '180px' }}
+                         title={isSaveDisabled ? 'มีตารางเวรสำหรับเดือนนี้บันทึกไว้แล้ว': ''}
+                     >
+                         {isSaving ? 'กำลังบันทึก...' : saveButtonText}
+                     </button>
+                 )}
+             </div>
+             {saveError && <div className="error-inline" style={{ color: 'var(--danger)', textAlign: 'center', marginTop: '10px' }}>{saveError}</div>}
+
         </div>
     );
 };

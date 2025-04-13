@@ -886,3 +886,42 @@ button:disabled {
 .nurse-item:active {
     cursor: grabbing;
 }
+
+.history-list {
+  margin-top: 20px;
+}
+
+.history-list ul {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  padding: 5px;
+}
+
+.history-item {
+    background-color: var(--gray-100);
+    margin-bottom: 5px;
+    padding: 12px 15px !important;
+    border-radius: var(--radius-sm);
+    border-bottom: none !important;
+}
+
+.history-item:hover {
+    background-color: var(--gray-200);
+}
+
+.nurse-management-container {
+    display: flex;
+    flex-direction: column;
+}
+
+.error-inline {
+    padding: 8px;
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+    border-radius: var(--radius-sm);
+    text-align: center;
+    margin-top: 10px;
+}
