@@ -47,6 +47,37 @@ def get_days_array(start_str, end_str):
         return None
     return days
 
+def get_previous_month_state_shifts(nurse_id, previous_schedule_data, max_consecutive_limit):
+    state = {'last_day_shifts': [], 'consecutive_shifts': 0, 'was_off_last_day': True}
+    if not previous_schedule_data or 'nurseSchedules' not in previous_schedule_data or 'days' not in previous_schedule_data:
+        return state
+
+    nurse_schedules_prev = previous_schedule_data.get('nurseSchedules', {})
+    prev_days_iso = previous_schedule_data.get('days', [])
+    if not prev_days_iso or nurse_id not in nurse_schedules_prev:
+        return state
+
+    last_day_iso = prev_days_iso[-1]
+    nurse_schedule_prev = nurse_schedules_prev[nurse_id]
+    shifts_on_last_day = nurse_schedule_prev.get('shifts', {}).get(last_day_iso, [])
+    state['last_day_shifts'] = sorted(shifts_on_last_day)
+    state['was_off_last_day'] = not bool(shifts_on_last_day)
+
+    consecutive_shifts = 0
+    for day_iso in reversed(prev_days_iso):
+        shifts_on_day = nurse_schedule_prev.get('shifts', {}).get(day_iso, [])
+        num_shifts_this_day = len(shifts_on_day)
+
+        if num_shifts_this_day > 0:
+            consecutive_shifts += num_shifts_this_day
+        else:
+            break
+
+    state['consecutive_shifts'] = consecutive_shifts
+    print(f"  [Prev Month State] Nurse {nurse_id}: Last Day Shifts={state['last_day_shifts']}, Consecutive Shifts={state['consecutive_shifts']}, Was Off Last={state['was_off_last_day']}")
+    return state
+
+
 @app.route('/generate-schedule', methods=['POST'])
 def generate_schedule_api():
     start_time = time.time()
@@ -59,6 +90,7 @@ def generate_schedule_api():
         try:
             nurses_data = data['nurses']
             schedule_info = data['schedule']
+            previous_month_schedule = data.get('previousMonthSchedule')
 
             start_date_str = schedule_info['startDate'].split('T')[0]
             end_date_str = schedule_info['endDate'].split('T')[0]
@@ -81,7 +113,7 @@ def generate_schedule_api():
             if not all('id' in n for n in nurses_data): raise ValueError("Missing 'id' in nurse data")
             if not isinstance(holidays_input, list) or not all(isinstance(h, int) and h > 0 and h < 32 for h in holidays_input): raise ValueError("Invalid 'holidays' list format")
             if REQ_MORNING < 0 or REQ_AFTERNOON < 0 or REQ_NIGHT < 0: raise ValueError("Required nurses cannot be negative")
-            if MAX_CONSECUTIVE_SHIFTS_WORKED < 1: raise ValueError(f"Max consecutive shifts worked must be >= 1")
+            if MAX_CONSECUTIVE_SHIFTS_WORKED < 1: raise ValueError(f"Max consecutive SHIFTS worked must be >= 1")
             if TARGET_OFF_DAYS < 0: raise ValueError("Target off days cannot be negative")
             if SOLVER_TIME_LIMIT < 5: print("Warning: Solver time limit < 5s is very short.")
             if MAX_CONSECUTIVE_SAME_SHIFT < 1: raise ValueError("Internal Error: MAX_CONSECUTIVE_SAME_SHIFT must be >= 1")
@@ -106,23 +138,36 @@ def generate_schedule_api():
         num_nurses = len(nurses_data)
         num_days = len(days)
         if num_days == 0:
-             return jsonify({"error": "ช่วงวันที่ที่เลือกไม่ถูกต้อง ทำให้ไม่มีวันในตารางเวร"}), 400
+                 return jsonify({"error": "ช่วงวันที่ที่เลือกไม่ถูกต้อง ทำให้ไม่มีวันในตารางเวร"}), 400
         nurse_indices = range(num_nurses)
         day_indices = range(num_days)
 
         print(f"Processing schedule for {num_nurses} nurses over {num_days} days ({start_date_str} to {end_date_str}).")
+        if previous_month_schedule:
+            print("Using previous month's schedule data for continuity.")
+        else:
+            print("No previous month schedule data provided.")
         print(f"Requirements per shift (M/A/N): {REQ_MORNING}/{REQ_AFTERNOON}/{REQ_NIGHT}")
         print(f"Max Consecutive SHIFTS Worked (before off): {MAX_CONSECUTIVE_SHIFTS_WORKED}")
         print(f"USER TARGET Off Days (Min): {TARGET_OFF_DAYS}")
         print(f"Holidays (day numbers): {holidays_input}")
         print(f"Solver time limit: {SOLVER_TIME_LIMIT}s")
         print(f"Other Hard Constraints: MaxConsecSameShift={MAX_CONSECUTIVE_SAME_SHIFT}, MaxConsecOff={MAX_CONSECUTIVE_OFF_DAYS}, MinOffInWindow={MIN_OFF_DAYS_IN_WINDOW}/{WINDOW_SIZE_FOR_MIN_OFF} days")
-        print(f"Penalty Weights: OffDayUnderTarget={PENALTY_OFF_DAY_UNDER_TARGET}, OffDayImbalance={PENALTY_OFF_DAY_IMBALANCE}, TotalShiftImbalance={PENALTY_TOTAL_SHIFT_IMBALANCE}, ShiftTypeImbalance={PENALTY_SHIFT_TYPE_IMBALANCE}, PerN+A={PENALTY_PER_NA_DOUBLE}, SoftConstraintViolation={PENALTY_SOFT_CONSTRAINT_VIOLATION}, N->M Transition={PENALTY_NIGHT_TO_MORNING_TRANSITION}")
+        print(f"Penalty Weights: OffDayUnderTarget={PENALTY_OFF_DAY_UNDER_TARGET}, OffDayImbalance={PENALTY_OFF_DAY_IMBALANCE}, TotalShiftImbalance={PENALTY_TOTAL_SHIFT_IMBALANCE}, ShiftTypeImbalance={PENALTY_SHIFT_TYPE_IMBALANCE}, PerN+A={PENALTY_PER_NA_DOUBLE}, SoftConstraintViolation={PENALTY_SOFT_CONSTRAINT_VIOLATION}, N+A->M Transition={PENALTY_NIGHT_TO_MORNING_TRANSITION}")
 
         nurse_id_map = {n: nurses_data[n]['id'] for n in nurse_indices}
+        nurse_id_to_index = {v: k for k, v in nurse_id_map.items()}
         nurse_constraints = {
             nurses_data[n]['id']: nurses_data[n].get('constraints', []) for n in nurse_indices
         }
+
+        previous_states = {}
+        if previous_month_schedule:
+            print("Calculating previous month end states (for consecutive SHIFTS)...")
+            for n_idx in nurse_indices:
+                nurse_id = nurse_id_map[n_idx]
+                previous_states[n_idx] = get_previous_month_state_shifts(nurse_id, previous_month_schedule, MAX_CONSECUTIVE_SHIFTS_WORKED)
+
 
         model = cp_model.CpModel()
 
@@ -133,17 +178,26 @@ def generate_schedule_api():
                     shifts[(n, d, s_val)] = model.NewBoolVar(f'shift_n{n}_d{d}_s{s_val}')
 
         is_off = {}
+        is_working = {}
         for n in nurse_indices:
             for d in day_indices:
                 is_off[(n, d)] = model.NewBoolVar(f'is_off_n{n}_d{d}')
+                is_working[(n, d)] = is_off[(n, d)].Not()
+
+        num_shifts_on_day = {}
+        for n in nurse_indices:
+            for d in day_indices:
+                 num_shifts_on_day[n, d] = model.NewIntVar(0, 2, f'num_shifts_n{n}_d{d}')
+                 model.Add(num_shifts_on_day[n, d] == shifts[(n, d, SHIFT_MORNING)] + shifts[(n, d, SHIFT_AFTERNOON)] + shifts[(n, d, SHIFT_NIGHT)])
+
 
         print("--- Adding Hard Constraints ---")
 
         for n in nurse_indices:
             for d in day_indices:
-                worked_shifts_today = [shifts[(n, d, s)] for s in SHIFTS]
-                model.Add(sum(worked_shifts_today) == 0).OnlyEnforceIf(is_off[(n, d)])
-                model.Add(sum(worked_shifts_today) >= 1).OnlyEnforceIf(is_off[(n, d)].Not())
+                model.Add(num_shifts_on_day[n, d] >= 1).OnlyEnforceIf(is_working[(n, d)])
+                model.Add(num_shifts_on_day[n, d] == 0).OnlyEnforceIf(is_off[(n, d)])
+
 
         for n in nurse_indices:
              for d in day_indices:
@@ -158,27 +212,84 @@ def generate_schedule_api():
                 else:
                     model.Add(sum(shifts[(n, d, s)] for n in nurse_indices) == 0)
 
+        nm_transition_penalties = []
 
-        print("NOTE: Hard constraint N(d) -> M(d+1) removed; using soft penalty instead.")
-
+        print("Applying transition constraints (including Day -1 to Day 0 if history exists)...")
         for n in nurse_indices:
+            prev_state = previous_states.get(n, {'last_day_shifts': [], 'consecutive_shifts': 0, 'was_off_last_day': True})
+            last_day_prev_shifts = prev_state['last_day_shifts']
+
+            if SHIFT_AFTERNOON in last_day_prev_shifts:
+                 print(f"  Applying A(-1)->N(0) forbidden for nurse {nurse_id_map[n]}")
+                 model.Add(shifts[(n, 0, SHIFT_NIGHT)] == 0)
+
+            if SHIFT_NIGHT in last_day_prev_shifts and SHIFT_AFTERNOON in last_day_prev_shifts:
+                 print(f"  Applying N+A(-1)->N(0) forbidden for nurse {nurse_id_map[n]}")
+                 model.Add(shifts[(n, 0, SHIFT_NIGHT)] == 0)
+
+            if SHIFT_NIGHT in last_day_prev_shifts and SHIFT_AFTERNOON in last_day_prev_shifts and PENALTY_NIGHT_TO_MORNING_TRANSITION > 0:
+                 print(f"  Adding potential N+A(-1)->M(0) penalty for nurse {nurse_id_map[n]}")
+                 nm_transition_penalties.append(shifts[(n, 0, SHIFT_MORNING)])
+
             if num_days > 1:
                 for d in range(num_days - 1):
                     model.Add(shifts[(n, d, SHIFT_AFTERNOON)] + shifts[(n, d + 1, SHIFT_NIGHT)] <= 1)
+
+                    na_double_d_indicator = model.NewBoolVar(f'na_double_d_n{n}_d{d}')
+                    model.AddMultiplicationEquality(na_double_d_indicator, [shifts[(n, d, SHIFT_NIGHT)], shifts[(n, d, SHIFT_AFTERNOON)]])
+                    model.AddImplication(na_double_d_indicator, shifts[(n, d+1, SHIFT_NIGHT)].Not())
+
+                    if PENALTY_NIGHT_TO_MORNING_TRANSITION > 0:
+                        nm_indicator_d = model.NewBoolVar(f'nm_transition_d_n{n}_d{d}')
+                        temp_m_indicator = model.NewBoolVar(f'temp_m_ind_n{n}_d{d}')
+                        model.AddMultiplicationEquality(temp_m_indicator, [na_double_d_indicator, shifts[(n, d + 1, SHIFT_MORNING)]])
+                        nm_transition_penalties.append(temp_m_indicator)
+
+        if MAX_CONSECUTIVE_SHIFTS_WORKED > 0:
+            print(f"Applying Max Consecutive SHIFTS Constraint: <= {MAX_CONSECUTIVE_SHIFTS_WORKED} shifts")
+            consecutive_shift_count_ending_day = {}
+            for n in nurse_indices:
+                 for d in day_indices:
+                      consecutive_shift_count_ending_day[n, d] = model.NewIntVar(0, MAX_CONSECUTIVE_SHIFTS_WORKED, f'consec_shifts_n{n}_d{d}')
+
+            for n in nurse_indices:
+                prev_state = previous_states.get(n, {'last_day_shifts': [], 'consecutive_shifts': 0, 'was_off_last_day': True})
+                prev_consecutive_shifts = prev_state['consecutive_shifts']
+                prev_was_off = prev_state['was_off_last_day']
+
+                model.Add(consecutive_shift_count_ending_day[n, 0] == 0).OnlyEnforceIf(is_off[n, 0])
+
+                if prev_was_off:
+                     model.Add(consecutive_shift_count_ending_day[n, 0] == num_shifts_on_day[n, 0]).OnlyEnforceIf(is_working[n, 0])
+                else:
+                     model.Add(consecutive_shift_count_ending_day[n, 0] == prev_consecutive_shifts + num_shifts_on_day[n, 0]).OnlyEnforceIf(is_working[n, 0])
+
+
+                if num_days > 1:
+                    for d in range(1, num_days):
+                        model.Add(consecutive_shift_count_ending_day[n, d] == 0).OnlyEnforceIf(is_off[n, d])
+
+                        model.Add(consecutive_shift_count_ending_day[n, d] == num_shifts_on_day[n, d]).OnlyEnforceIf(is_working[n, d]).OnlyEnforceIf(is_off[n, d-1])
+
+                        model.Add(consecutive_shift_count_ending_day[n, d] == consecutive_shift_count_ending_day[n, d-1] + num_shifts_on_day[n, d]).OnlyEnforceIf(is_working[n, d]).OnlyEnforceIf(is_working[n, d-1])
+
+
+        else:
+             print("Max Consecutive SHIFTS constraint disabled (limit <= 0).")
+
 
         if MAX_CONSECUTIVE_SAME_SHIFT > 0:
             for n in nurse_indices:
                 for s in SHIFTS:
                     if num_days > MAX_CONSECUTIVE_SAME_SHIFT:
                         for d_start in range(num_days - MAX_CONSECUTIVE_SAME_SHIFT):
-                            model.Add(sum(shifts[(n, d_start + k, s)] for k in range(MAX_CONSECUTIVE_SAME_SHIFT + 1)) <= MAX_CONSECUTIVE_SAME_SHIFT)
+                             model.Add(sum(shifts[(n, d_start + k, s)] for k in range(MAX_CONSECUTIVE_SAME_SHIFT + 1)) <= MAX_CONSECUTIVE_SAME_SHIFT)
 
         if MAX_CONSECUTIVE_OFF_DAYS > 0:
             for n in nurse_indices:
                 if num_days > MAX_CONSECUTIVE_OFF_DAYS:
                     for d_start in range(num_days - MAX_CONSECUTIVE_OFF_DAYS):
                         model.Add(sum(is_off[(n, d_start + k)] for k in range(MAX_CONSECUTIVE_OFF_DAYS + 1)) <= MAX_CONSECUTIVE_OFF_DAYS)
-
 
         if num_days >= WINDOW_SIZE_FOR_MIN_OFF and MIN_OFF_DAYS_IN_WINDOW > 0:
             print(f"Applying Min Off Days Constraint: >= {MIN_OFF_DAYS_IN_WINDOW} in every {WINDOW_SIZE_FOR_MIN_OFF} days")
@@ -215,13 +326,13 @@ def generate_schedule_api():
                     if constraint_type in day_of_week_map:
                         target_weekday = day_of_week_map[constraint_type]
                         if constraint_strength == 'hard':
-                             applied_hard_constraints_count += 1
-                             for d in day_indices:
-                                 if days[d].weekday() == target_weekday: model.Add(is_off[(n, d)] == 1)
+                            applied_hard_constraints_count += 1
+                            for d in day_indices:
+                                if days[d].weekday() == target_weekday: model.Add(is_off[(n, d)] == 1)
                         elif constraint_strength == 'soft':
                             applied_soft_constraints_count += 1
                             for d in day_indices:
-                                if days[d].weekday() == target_weekday: soft_constraint_violation_terms.append(is_off[(n, d)].Not())
+                                if days[d].weekday() == target_weekday: soft_constraint_violation_terms.append(is_working[(n, d)])
                         else: print(f"Warning: Unknown strength '{constraint_strength}' for {constraint_type}")
 
                     elif constraint_type == 'no_morning_shifts':
@@ -233,13 +344,13 @@ def generate_schedule_api():
                             for d in day_indices: soft_constraint_violation_terms.append(shifts[(n, d, SHIFT_MORNING)])
                         else: print(f"Warning: Unknown strength '{constraint_strength}' for {constraint_type}")
                     elif constraint_type == 'no_afternoon_shifts':
-                         if constraint_strength == 'hard':
+                        if constraint_strength == 'hard':
                             applied_hard_constraints_count += 1
                             for d in day_indices: model.Add(shifts[(n, d, SHIFT_AFTERNOON)] == 0)
-                         elif constraint_strength == 'soft':
+                        elif constraint_strength == 'soft':
                             applied_soft_constraints_count += 1
                             for d in day_indices: soft_constraint_violation_terms.append(shifts[(n, d, SHIFT_AFTERNOON)])
-                         else: print(f"Warning: Unknown strength '{constraint_strength}' for {constraint_type}")
+                        else: print(f"Warning: Unknown strength '{constraint_strength}' for {constraint_type}")
                     elif constraint_type == 'no_night_shifts':
                         if constraint_strength == 'hard':
                             applied_hard_constraints_count += 1
@@ -272,54 +383,30 @@ def generate_schedule_api():
                                     for d in day_indices:
                                         if days[d].day in forbidden_day_numbers: model.Add(is_off[(n, d)] == 1)
                                 elif constraint_strength == 'soft':
-                                     applied_soft_constraints_count += 1
-                                     for d in day_indices:
-                                         if days[d].day in forbidden_day_numbers: soft_constraint_violation_terms.append(is_off[(n, d)].Not())
+                                    applied_soft_constraints_count += 1
+                                    for d in day_indices:
+                                         if days[d].day in forbidden_day_numbers: soft_constraint_violation_terms.append(is_working[(n, d)])
                                 else: print(f"Warning: Unknown strength '{constraint_strength}' for {constraint_type}")
                             except (ValueError, TypeError) as specific_day_err:
                                 print(f"Warning: Invalid 'no_specific_days' value '{constraint_value}' for nurse {nurse_id}. Skipping constraint {constraint_index}. Error: {specific_day_err}")
                         else:
-                             print(f"Warning: Invalid value type for 'no_specific_days' for nurse {nurse_id}. Expected list, got {type(constraint_value)}. Skipping constraint {constraint_index}.")
+                            print(f"Warning: Invalid value type for 'no_specific_days' for nurse {nurse_id}. Expected list, got {type(constraint_value)}. Skipping constraint {constraint_index}.")
 
                     else:
                         print(f"Warning: Unknown constraint type '{constraint_type}' encountered for nurse {nurse_id} (Constraint Index: {constraint_index}). Skipping.")
 
                 except Exception as constraint_err:
-                     print(f"!!! ERROR applying constraint {constraint_index} (Type: {constraint_type}, Strength: {constraint_strength}) for nurse {nurse_id}: {constraint_err}")
-                     print(traceback.format_exc())
+                    print(f"!!! ERROR applying constraint {constraint_index} (Type: {constraint_type}, Strength: {constraint_strength}) for nurse {nurse_id}: {constraint_err}")
+                    print(traceback.format_exc())
 
         print(f"Applied {applied_hard_constraints_count} hard & {applied_soft_constraints_count} soft individual constraints.")
-
-        if MAX_CONSECUTIVE_SHIFTS_WORKED > 0:
-            print(f"Applying Max Consecutive SHIFTS Constraint: <= {MAX_CONSECUTIVE_SHIFTS_WORKED} total shifts")
-            num_shifts_today = {}
-            for n in nurse_indices:
-                for d in day_indices:
-                    num_shifts_today[n, d] = (shifts[(n, d, SHIFT_MORNING)] +
-                                              shifts[(n, d, SHIFT_AFTERNOON)] +
-                                              shifts[(n, d, SHIFT_NIGHT)])
-
-            consecutive_shift_count = {}
-            for n in nurse_indices:
-                for d in day_indices:
-                    consecutive_shift_count[n, d] = model.NewIntVar(0, MAX_CONSECUTIVE_SHIFTS_WORKED, f'consec_shifts_n{n}_d{d}')
-
-            for n in nurse_indices:
-                model.Add(consecutive_shift_count[n, 0] == 0).OnlyEnforceIf(is_off[n, 0])
-                model.Add(consecutive_shift_count[n, 0] == num_shifts_today[n, 0]).OnlyEnforceIf(is_off[n, 0].Not())
-                if num_days > 1:
-                    for d in range(1, num_days):
-                        model.Add(consecutive_shift_count[n, d] == 0).OnlyEnforceIf(is_off[n, d])
-                        model.Add(consecutive_shift_count[n, d] == consecutive_shift_count[n, d - 1] + num_shifts_today[n, d]).OnlyEnforceIf(is_off[n, d].Not())
-        else:
-             print("Max Consecutive SHIFTS constraint disabled (limit <= 0).")
 
         print("--- Defining Objective Function ---")
         objective_terms = []
 
         if soft_constraint_violation_terms and PENALTY_SOFT_CONSTRAINT_VIOLATION > 0:
-             objective_terms.append(PENALTY_SOFT_CONSTRAINT_VIOLATION * sum(soft_constraint_violation_terms))
-             print(f"Added penalty for {len(soft_constraint_violation_terms)} potential soft constraint violations (Weight per violation: {PENALTY_SOFT_CONSTRAINT_VIOLATION})")
+              objective_terms.append(PENALTY_SOFT_CONSTRAINT_VIOLATION * sum(soft_constraint_violation_terms))
+              print(f"Added penalty for {len(soft_constraint_violation_terms)} potential soft constraint violations (Weight per violation: {PENALTY_SOFT_CONSTRAINT_VIOLATION})")
 
         total_off_days_per_nurse = [model.NewIntVar(0, num_days, f'total_off_n{n}') for n in nurse_indices]
         total_shifts_per_nurse = [model.NewIntVar(0, num_days * 2, f'total_shifts_n{n}') for n in nurse_indices]
@@ -332,7 +419,8 @@ def generate_schedule_api():
             model.Add(total_morning_shifts[n] == sum(shifts[(n, d, SHIFT_MORNING)] for d in day_indices))
             model.Add(total_afternoon_shifts[n] == sum(shifts[(n, d, SHIFT_AFTERNOON)] for d in day_indices))
             model.Add(total_night_shifts[n] == sum(shifts[(n, d, SHIFT_NIGHT)] for d in day_indices))
-            model.Add(total_shifts_per_nurse[n] == total_morning_shifts[n] + total_afternoon_shifts[n] + total_night_shifts[n])
+            model.Add(total_shifts_per_nurse[n] == sum(num_shifts_on_day[n, d] for d in day_indices))
+
 
         if TARGET_OFF_DAYS >= 0 and PENALTY_OFF_DAY_UNDER_TARGET > 0:
             off_days_under_target_vars = []
@@ -393,17 +481,10 @@ def generate_schedule_api():
                 objective_terms.append(PENALTY_PER_NA_DOUBLE * sum(all_na_double_terms))
                 print(f"Added penalty for each N+A (ดึกควบบ่าย) double shift occurrence (Weight: {PENALTY_PER_NA_DOUBLE})")
 
-        if PENALTY_NIGHT_TO_MORNING_TRANSITION > 0 and num_days > 1:
-            nm_transition_penalties = []
-            for n in nurse_indices:
-                for d in range(num_days - 1):
-                    nm_indicator = model.NewBoolVar(f'nm_transition_n{n}_d{d}')
-                    model.AddMultiplicationEquality(nm_indicator, [shifts[(n, d, SHIFT_NIGHT)], shifts[(n, d + 1, SHIFT_MORNING)]])
-                    nm_transition_penalties.append(nm_indicator)
+        if nm_transition_penalties and PENALTY_NIGHT_TO_MORNING_TRANSITION > 0:
+            objective_terms.append(PENALTY_NIGHT_TO_MORNING_TRANSITION * sum(nm_transition_penalties))
+            print(f"Added penalty for each N+A(d) -> M(d+1) transition (Weight: {PENALTY_NIGHT_TO_MORNING_TRANSITION}, Count: {len(nm_transition_penalties)})")
 
-            if nm_transition_penalties:
-                objective_terms.append(PENALTY_NIGHT_TO_MORNING_TRANSITION * sum(nm_transition_penalties))
-                print(f"Added penalty for each N(d) -> M(d+1) transition (Weight: {PENALTY_NIGHT_TO_MORNING_TRANSITION})")
 
         if objective_terms:
             model.Minimize(sum(objective_terms))
@@ -414,6 +495,7 @@ def generate_schedule_api():
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = SOLVER_TIME_LIMIT
         solver.parameters.log_search_progress = True
+        solver.parameters.num_workers = 8
 
         print(f"\n--- Starting Solver (Time Limit: {SOLVER_TIME_LIMIT}s) ---")
         solve_start_time = time.time()
@@ -532,7 +614,7 @@ def generate_schedule_api():
         else:
             error_message = f"ไม่สามารถสร้างตารางเวรได้ (Solver Status: {solver.StatusName(status)}). "
             if status == cp_model.INFEASIBLE:
-                error_message += "ข้อจำกัดที่ตั้งไว้แบบ 'ต้องเป็นแบบนี้เท่านั้น' (Hard Constraints) ขัดแย้งกันเอง หรืออาจเกิดจากข้อจำกัดส่วนบุคคล ลองตรวจสอบและผ่อนปรนข้อจำกัดแบบ Hard หรือเปลี่ยนบางข้อจำกัดส่วนบุคคลเป็นแบบ 'ถ้าเป็นไปได้' (Soft)"
+                error_message += "ข้อจำกัดที่ตั้งไว้แบบ 'ต้องเป็นแบบนี้เท่านั้น' (Hard Constraints) ขัดแย้งกันเอง หรืออาจเกิดจากข้อจำกัดส่วนบุคคล หรือข้อจำกัดที่ต่อเนื่องมาจากเดือนก่อนหน้า (เช่น เวรติดต่อกันเกินกำหนด) ลองตรวจสอบและผ่อนปรนข้อจำกัดแบบ Hard หรือเปลี่ยนบางข้อจำกัดส่วนบุคคลเป็นแบบ 'ถ้าเป็นไปได้' (Soft)"
                 try:
                     print('\n--- Infeasibility Analysis ---')
                     assumptions = solver.SufficientAssumptionsForInfeasibility()

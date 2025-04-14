@@ -127,36 +127,36 @@ function App() {
         } catch (e) {
              if (e.code === 'failed-precondition') {
                  console.warn("Order index likely missing, fetching without ordering and will attempt re-order.");
-                try {
-                    const querySnapshot = await getDocs(collection(db, 'nurses'));
+                 try {
+                     const querySnapshot = await getDocs(collection(db, 'nurses'));
                      const list = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
                      const sortedByName = list.sort((a, b) => `${a?.firstName ?? ''} ${a?.lastName ?? ''}`.localeCompare(`${b?.firstName ?? ''} ${b?.lastName ?? ''}`, 'th'))
-                    const batch = writeBatch(db);
+                     const batch = writeBatch(db);
                      let orderUpdated = false;
-                    sortedByName.forEach((nurse, index) => {
+                     sortedByName.forEach((nurse, index) => {
                          if (nurse.order === undefined || nurse.order === null) {
                              nurse.order = index;
                              const nurseRef = doc(db, 'nurses', nurse.id);
                              batch.update(nurseRef, { order: index });
-                            orderUpdated = true;
+                             orderUpdated = true;
                          }
                      });
-                    if (orderUpdated) {
-                        console.log("Applying initial order based on name sort.");
-                        await batch.commit();
-                    }
-                    setNurses(sortedByName.sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity)));
-                    showErrorPopup(`โหลดข้อมูลพยาบาลได้ แต่จำเป็นต้องสร้าง index สำหรับ 'order' กรุณาลองโหลดหน้าใหม่อีกครั้งเพื่อการเรียงลำดับที่ถูกต้อง`);
+                     if (orderUpdated) {
+                         console.log("Applying initial order based on name sort.");
+                         await batch.commit();
+                     }
+                     setNurses(sortedByName.sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity)));
+                     showErrorPopup(`โหลดข้อมูลพยาบาลได้ แต่จำเป็นต้องสร้าง index สำหรับ 'order' กรุณาลองโหลดหน้าใหม่อีกครั้งเพื่อการเรียงลำดับที่ถูกต้อง`);
 
-                } catch (fallbackError) {
-                    showErrorPopup(`โหลดข้อมูลพยาบาลไม่ได้ และเกิดข้อผิดพลาดในการสร้าง order เริ่มต้น: ${fallbackError.message || fallbackError}`);
-                     setNurses([]);
-                }
+                 } catch (fallbackError) {
+                     showErrorPopup(`โหลดข้อมูลพยาบาลไม่ได้ และเกิดข้อผิดพลาดในการสร้าง order เริ่มต้น: ${fallbackError.message || fallbackError}`);
+                      setNurses([]);
+                 }
 
-            } else {
+             } else {
                  showErrorPopup(`โหลดข้อมูลพยาบาลไม่ได้: ${e.message || e}`);
                  setNurses([]);
-             }
+              }
         } finally {
             setLoading(false);
         }
@@ -206,7 +206,7 @@ function App() {
             await updateDoc(doc(db, 'nurses', id), data);
             setNurses(prevNurses =>
                  prevNurses.map(n => n.id === id ? { ...n, ...data } : n).sort((a,b) => (a.order ?? Infinity) - (b.order ?? Infinity))
-             );
+               );
             return true;
         } catch (e) {
             showErrorPopup(`อัปเดตข้อมูลพยาบาลไม่ได้: ${e.message || e}`);
@@ -247,25 +247,37 @@ function App() {
         setIsEditing(false);
     };
 
-    const checkCurrentMonthHistoryExists = async (startDateStr) => {
-        if (!startDateStr) return false;
+    const getSpecificMonthHistory = async (monthIndex, year) => {
+        if (isNaN(monthIndex) || isNaN(year)) return null;
+        const monthLabelToCheck = `${getThaiMonth(monthIndex)} ${year + 543}`;
+        console.log("Checking for history:", monthLabelToCheck);
         try {
-            const { monthIndex, year } = getDisplayDateInfo(startDateStr);
-            if (isNaN(monthIndex) || isNaN(year)) return false;
-            const monthLabelToCheck = `${getThaiMonth(monthIndex)} ${year + 543}`;
-
             const q = query(
                 collection(db, "scheduleHistory"),
                 where("monthLabel", "==", monthLabelToCheck),
                 limit(1)
             );
             const querySnapshot = await getDocs(q);
-            return !querySnapshot.empty;
+            if (!querySnapshot.empty) {
+                 const docSnap = querySnapshot.docs[0];
+                 console.log("Found history:", docSnap.id);
+                 return docSnap.data();
+            }
+            console.log("No history found for", monthLabelToCheck);
+            return null;
         } catch (error) {
-            console.error("Error checking history existence:", error);
-            showErrorPopup(`เกิดข้อผิดพลาดในการตรวจสอบประวัติ: ${error.message}`);
-            return false;
+            console.error("Error checking specific history existence:", error);
+            showErrorPopup(`เกิดข้อผิดพลาดในการตรวจสอบประวัติ (${monthLabelToCheck}): ${error.message}`);
+            return null;
         }
+    };
+
+    const checkCurrentMonthHistoryExists = async (startDateStr) => {
+         if (!startDateStr) return false;
+         const { monthIndex, year } = getDisplayDateInfo(startDateStr);
+         if (isNaN(monthIndex) || isNaN(year)) return false;
+         const historyData = await getSpecificMonthHistory(monthIndex, year);
+         return historyData !== null;
     };
 
 
@@ -291,7 +303,7 @@ function App() {
              showErrorPopup("ไม่สามารถสร้างตารางได้: ข้อมูลวันหยุดขั้นต่ำไม่ถูกต้อง หรือไม่ได้ระบุ");
             setIsGenerating(false);
             return;
-        }
+         }
 
         setLastUsedTimeLimit(scheduleParams.solverTimeLimit || 60);
         const localStartDateStr = formatDateToLocalYYYYMMDD(scheduleParams.startDate);
@@ -302,6 +314,25 @@ function App() {
             setIsGenerating(false);
             return;
         }
+
+        let previousMonthScheduleData = null;
+        try {
+            const currentStartDate = new Date(localStartDateStr + 'T00:00:00Z');
+            const prevMonthDate = new Date(currentStartDate);
+            prevMonthDate.setUTCMonth(currentStartDate.getUTCMonth() - 1);
+            const prevMonthIndex = prevMonthDate.getUTCMonth();
+            const prevMonthYear = prevMonthDate.getUTCFullYear();
+            console.log(`Attempting to fetch history for previous month: ${prevMonthIndex + 1}/${prevMonthYear}`);
+            previousMonthScheduleData = await getSpecificMonthHistory(prevMonthIndex, prevMonthYear);
+            if (previousMonthScheduleData) {
+                console.log("Previous month history found and will be included in the request.");
+            } else {
+                 console.log("No previous month history found.");
+            }
+        } catch (histError) {
+             console.error("Error fetching previous month history:", histError);
+        }
+
 
         const payload = {
             nurses: nurses.map(n => ({
@@ -321,7 +352,8 @@ function App() {
             requiredNursesNight: scheduleParams.requiredNursesNight,
             maxConsecutiveShiftsWorked: scheduleParams.maxConsecutiveShiftsWorked,
             targetOffDays: scheduleParams.targetOffDays,
-            solverTimeLimit: scheduleParams.solverTimeLimit
+            solverTimeLimit: scheduleParams.solverTimeLimit,
+            previousMonthSchedule: previousMonthScheduleData ? previousMonthScheduleData.scheduleData : null
         };
 
         try {
@@ -503,7 +535,7 @@ function App() {
                      setShowHistoryList(true);
                  }
 
-                if (generatedSchedule && generatedSchedule.startDate) {
+                 if (generatedSchedule && generatedSchedule.startDate) {
                      const { monthIndex, year } = getDisplayDateInfo(generatedSchedule.startDate);
                      if (!isNaN(monthIndex) && !isNaN(year)) {
                          const currentMonthLabel = `${getThaiMonth(monthIndex)} ${year + 543}`;
@@ -524,56 +556,56 @@ function App() {
     let mainContent = null;
     if (viewingHistoryScheduleId && !historyLoading) {
 
-        mainContent = selectedHistoryScheduleData ? (
-            <>
+         mainContent = selectedHistoryScheduleData ? (
+             <>
                  <button onClick={() => { setViewingHistoryScheduleId(null); fetchScheduleHistory(); }} style={{ marginBottom: '15px' }}>
                      &larr; กลับไปรายการประวัติ
                  </button>
                  <ScheduleDisplay
                      schedule={selectedHistoryScheduleData.scheduleData}
                      nurses={
-                        (selectedHistoryScheduleData.nurseDisplayOrder || Object.keys(selectedHistoryScheduleData.scheduleData.nurseSchedules))
-                            .map(id => selectedHistoryScheduleData.scheduleData.nurseSchedules[id]?.nurse)
-                            .filter(Boolean)
+                         (selectedHistoryScheduleData.nurseDisplayOrder || Object.keys(selectedHistoryScheduleData.scheduleData.nurseSchedules))
+                             .map(id => selectedHistoryScheduleData.scheduleData.nurseSchedules[id]?.nurse)
+                             .filter(Boolean)
                      }
                      isHistoryView={true}
                  />
-            </>
-        ) : (
-             <div className="loading">กำลังโหลดข้อมูลตารางเวร...</div>
-         );
+             </>
+         ) : (
+              <div className="loading">กำลังโหลดข้อมูลตารางเวร...</div>
+           );
     } else if (selectedTab === 'nurses') {
 
-        mainContent = (
-            <div className="nurse-management-container">
-                <div className="nurse-management">
-                    <NurseForm
-                        addNurse={addNurse}
-                        updateNurse={updateNurse}
-                        nurseToEdit={editingNurse}
-                        isEditing={isEditing}
-                        onCancelEdit={handleCancelEdit}
-                    />
-                    <div className="nurse-list card">
-                        <h2>รายชื่อพยาบาล <span className="badge">{nurses.length}</span></h2>
-                        {nurses.length === 0 && !loading ? (
-                            <div className="empty-state"><p>ยังไม่มีข้อมูลพยาบาลในระบบ</p></div>
-                        ) : (
-                            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                                <SortableContext items={nurses.map(n => n.id)} strategy={verticalListSortingStrategy}>
-                                    {nurses.map(nurse => (
-                                        <SortableNurseItem
-                                            key={nurse.id} id={nurse.id} nurse={nurse}
-                                            handleEditNurse={handleEditNurse} deleteNurse={deleteNurse}
-                                            isEditing={isEditing} editingNurse={editingNurse}
-                                        />
-                                    ))}
-                                </SortableContext>
-                            </DndContext>
-                        )}
-                    </div>
-                </div>
-                <div style={{ marginTop: '20px', borderTop: '1px solid var(--gray-300)', paddingTop: '20px' }}>
+         mainContent = (
+             <div className="nurse-management-container">
+                 <div className="nurse-management">
+                     <NurseForm
+                         addNurse={addNurse}
+                         updateNurse={updateNurse}
+                         nurseToEdit={editingNurse}
+                         isEditing={isEditing}
+                         onCancelEdit={handleCancelEdit}
+                     />
+                     <div className="nurse-list card">
+                         <h2>รายชื่อพยาบาล <span className="badge">{nurses.length}</span></h2>
+                         {nurses.length === 0 && !loading ? (
+                             <div className="empty-state"><p>ยังไม่มีข้อมูลพยาบาลในระบบ</p></div>
+                         ) : (
+                             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                                 <SortableContext items={nurses.map(n => n.id)} strategy={verticalListSortingStrategy}>
+                                     {nurses.map(nurse => (
+                                         <SortableNurseItem
+                                             key={nurse.id} id={nurse.id} nurse={nurse}
+                                             handleEditNurse={handleEditNurse} deleteNurse={deleteNurse}
+                                             isEditing={isEditing} editingNurse={editingNurse}
+                                         />
+                                     ))}
+                                 </SortableContext>
+                             </DndContext>
+                         )}
+                     </div>
+                 </div>
+                 <div style={{ marginTop: '20px', borderTop: '1px solid var(--gray-300)', paddingTop: '20px' }}>
                      {!showHistoryList && (
                          <button onClick={fetchScheduleHistory} disabled={historyLoading}>
                              <span role="img" aria-label="history-book">📚</span> แสดงประวัติตารางเวรที่บันทึกไว้
@@ -592,39 +624,39 @@ function App() {
                             />
                          </>
                      )}
-                </div>
-            </div>
-        );
+                 </div>
+             </div>
+         );
     } else if (selectedTab === 'generate') {
 
-        mainContent = !isGenerating ? (
-            <ScheduleGenerator
-                nurses={nurses}
-                onGenerateSchedule={generateSchedule}
-                updateNurse={updateNurse}
-            />
-        ) : null;
+         mainContent = !isGenerating ? (
+             <ScheduleGenerator
+                 nurses={nurses}
+                 onGenerateSchedule={generateSchedule}
+                 updateNurse={updateNurse}
+             />
+         ) : null;
     } else if (selectedTab === 'view') {
 
-        mainContent = !isGenerating && generatedSchedule ? (
-            <ScheduleDisplay
-                schedule={generatedSchedule}
-                nurses={nurses}
-                onSaveSchedule={saveScheduleToHistory}
-                isHistoryView={false}
-                isSaveDisabled={currentMonthHistoryExists}
-            />
-        ) : (
-            !isGenerating && (
-                 <div className="card empty-state">
-                     <p>ยังไม่มีตารางเวรให้แสดงผล</p>
-                     <p>กรุณากลับไปที่หน้า 'สร้างตารางเวร' เพื่อสร้างตารางใหม่</p>
-                     <button onClick={() => setSelectedTab('generate')} disabled={nurses.length === 0}>
-                         ไปที่หน้าสร้างตารางเวร
-                     </button>
-                 </div>
-             )
-         );
+         mainContent = !isGenerating && generatedSchedule ? (
+             <ScheduleDisplay
+                 schedule={generatedSchedule}
+                 nurses={nurses}
+                 onSaveSchedule={saveScheduleToHistory}
+                 isHistoryView={false}
+                 isSaveDisabled={currentMonthHistoryExists}
+             />
+         ) : (
+              !isGenerating && (
+                  <div className="card empty-state">
+                      <p>ยังไม่มีตารางเวรให้แสดงผล</p>
+                      <p>กรุณากลับไปที่หน้า 'สร้างตารางเวร' เพื่อสร้างตารางใหม่</p>
+                      <button onClick={() => setSelectedTab('generate')} disabled={nurses.length === 0}>
+                          ไปที่หน้าสร้างตารางเวร
+                      </button>
+                  </div>
+               )
+           );
     }
 
 
