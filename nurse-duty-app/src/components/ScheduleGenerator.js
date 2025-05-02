@@ -189,27 +189,21 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
             requiredNursesNight: requiredNight,
             maxConsecutiveShiftsWorked: maxConsecShiftsWorked,
             targetOffDays: targetOff,
-            solverTimeLimit: 60.0,
+            solverTimeLimit: 10.0,
         });
     };
 
-    // Handler สำหรับเปลี่ยนปีจาก Input
     const handleYearChange = (event) => {
         const beYearString = event.target.value;
-        // อนุญาตให้ลบจนหมดได้ (สำหรับแก้ไข) แต่ถ้ามีค่า ต้องเป็นตัวเลข
         if (beYearString === '') {
-            setSelectedYear(''); // หรือตั้งค่าเป็น null หรือค่าเริ่มต้นที่เหมาะสม
+            setSelectedYear('');
         } else {
             const beYear = parseInt(beYearString);
-             // ตรวจสอบว่าเป็นตัวเลข และอาจกำหนดช่วงที่สมเหตุสมผล (เช่น ไม่น้อยกว่า 2400)
-            if (!isNaN(beYear) && beYear > 0) { // หรือ beYear >= 2400
-                 setSelectedYear(beYear - 543); // แปลง พ.ศ. เป็น ค.ศ. แล้วเก็บใน state
+            if (!isNaN(beYear) && beYear > 0) {
+                 setSelectedYear(beYear - 543);
             }
-            // อาจจะมีการแจ้งเตือนถ้าใส่ค่าไม่ถูกต้อง แต่ input type="number" ช่วยได้ระดับหนึ่ง
         }
     };
-
-    // คำนวณค่าที่จะแสดงใน input (พ.ศ.)
     const displayYear = selectedYear === '' || isNaN(selectedYear) ? '' : selectedYear + 543;
 
     return (
@@ -232,18 +226,17 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
                                  <option value="" disabled>-- เดือนที่ต้องการ --</option>
                                  {months.map(month => (<option key={month.value} value={month.value}>{month.label}</option>))}
                              </select>
-                             {/* เปลี่ยนจาก select เป็น input type number */}
                              <input
                                 type="number"
                                 aria-label="Input Year (BE)"
-                                value={displayYear} // แสดงผลเป็น พ.ศ.
-                                onChange={handleYearChange} // ใช้ handler ใหม่
+                                value={displayYear}
+                                onChange={handleYearChange}
                                 placeholder="ปี พ.ศ."
-                                min="1" // อาจกำหนดขั้นต่ำที่สมเหตุสมผลกว่านี้ เช่น 2400
+                                min="1"
                                 step="1"
                                 required
-                                className="form-input" // ใช้ class เดียวกับ input อื่นๆ หรือปรับแต่งตามต้องการ
-                                style={{ minWidth: '100px' }} // กำหนดความกว้างได้ตามเหมาะสม
+                                className="form-input"
+                                style={{ minWidth: '100px' }}
                              />
                          </div>
                      </div>
