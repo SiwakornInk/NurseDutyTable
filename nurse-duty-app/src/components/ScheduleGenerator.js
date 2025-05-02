@@ -43,9 +43,6 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
         { value: '8', label: 'กันยายน' }, { value: '9', label: 'ตุลาคม' },
         { value: '10', label: 'พฤศจิกายน' }, { value: '11', label: 'ธันวาคม' }
     ];
-    const years = [];
-    const currentYear = new Date().getFullYear();
-    for (let i = currentYear - 2; i <= currentYear + 5; i++) { years.push(i); }
 
     const constraintRuleTypes = [
         { value: 'no_sundays', label: 'ไม่ขึ้นเวรวันอาทิตย์' }, { value: 'no_mondays', label: 'ไม่ขึ้นเวรวันจันทร์' },
@@ -68,7 +65,7 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
     };
 
     const getDaysInMonth = (year, month) => {
-        if (month === '' || year === '') return 0;
+        if (month === '' || year === '' || isNaN(year) || isNaN(month)) return 0;
         try {
             return new Date(Number(year), Number(month) + 1, 0).getDate();
         } catch (e) {
@@ -93,8 +90,8 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
 
         if (constraintType === 'no_specific_days') {
             constraintValue = specificDates.split(',').map(d => d.trim())
-                .filter(d => { const dayNum = parseInt(d); return !isNaN(dayNum) && dayNum > 0 && dayNum <= daysInSelectedMonth; })
-                .map(d => parseInt(d)).sort((a, b) => a - b);
+                 .filter(d => { const dayNum = parseInt(d); return !isNaN(dayNum) && dayNum > 0 && dayNum <= daysInSelectedMonth; })
+                 .map(d => parseInt(d)).sort((a, b) => a - b);
             if (constraintValue.length === 0 && specificDates.trim() !== '') { alert(`กรุณาระบุวันที่ให้ถูกต้อง (1-${daysInSelectedMonth})`); return; }
             if (constraintValue.length === 0 && specificDates.trim() === '') { alert("กรุณาระบุวันที่"); return; }
         } else {
@@ -154,6 +151,10 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
             alert('กรุณาเลือกเดือน');
             return;
         }
+        if (isNaN(selectedYear) || selectedYear <= 0) {
+             alert('กรุณากรอกปี พ.ศ. ให้ถูกต้อง');
+             return;
+        }
 
         if (requiredMorning < 1 || requiredAfternoon < 1 || requiredNight < 1) {
             alert('จำนวนพยาบาลต่อเวรต้องมีอย่างน้อย 1 คน'); return;
@@ -175,9 +176,9 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
         }
 
         const holidays = holidayDates.split(',')
-                                     .map(d => d.trim())
-                                     .filter(d => !isNaN(parseInt(d)) && parseInt(d) > 0 && parseInt(d) <= 31)
-                                     .map(d => parseInt(d));
+                                         .map(d => d.trim())
+                                         .filter(d => !isNaN(parseInt(d)) && parseInt(d) > 0 && parseInt(d) <= 31)
+                                         .map(d => parseInt(d));
 
         onGenerateSchedule({
             startDate,
@@ -192,6 +193,25 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
         });
     };
 
+    // Handler สำหรับเปลี่ยนปีจาก Input
+    const handleYearChange = (event) => {
+        const beYearString = event.target.value;
+        // อนุญาตให้ลบจนหมดได้ (สำหรับแก้ไข) แต่ถ้ามีค่า ต้องเป็นตัวเลข
+        if (beYearString === '') {
+            setSelectedYear(''); // หรือตั้งค่าเป็น null หรือค่าเริ่มต้นที่เหมาะสม
+        } else {
+            const beYear = parseInt(beYearString);
+             // ตรวจสอบว่าเป็นตัวเลข และอาจกำหนดช่วงที่สมเหตุสมผล (เช่น ไม่น้อยกว่า 2400)
+            if (!isNaN(beYear) && beYear > 0) { // หรือ beYear >= 2400
+                 setSelectedYear(beYear - 543); // แปลง พ.ศ. เป็น ค.ศ. แล้วเก็บใน state
+            }
+            // อาจจะมีการแจ้งเตือนถ้าใส่ค่าไม่ถูกต้อง แต่ input type="number" ช่วยได้ระดับหนึ่ง
+        }
+    };
+
+    // คำนวณค่าที่จะแสดงใน input (พ.ศ.)
+    const displayYear = selectedYear === '' || isNaN(selectedYear) ? '' : selectedYear + 543;
+
     return (
         <div className="schedule-generator card">
             <h2><span role="img" aria-label="calendar" style={{ marginRight: '10px' }}>🗓️</span> สร้างตารางเวร</h2>
@@ -200,7 +220,7 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
                  <h3><span role="img" aria-label="time">⏱️</span> 1. เลือกช่วงเวลาและวันหยุด</h3>
                  <div className="month-selector">
                      <div className="form-group">
-                         <label htmlFor="monthSelect">เลือกเดือน/ปี</label>
+                         <label htmlFor="monthSelect">เลือกเดือน / กรอกปี พ.ศ.</label>
                          <div style={{ display: 'flex', gap: '10px' }}>
                              <select
                                  id="monthSelect"
@@ -212,15 +232,19 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
                                  <option value="" disabled>-- เดือนที่ต้องการ --</option>
                                  {months.map(month => (<option key={month.value} value={month.value}>{month.label}</option>))}
                              </select>
-                             <select
-                                 aria-label="Select Year"
-                                 value={selectedYear}
-                                 onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-                                 required
-                                 className="form-select"
-                              >
-                                 {years.map(year => (<option key={year} value={year}>{year + 543}</option>))}
-                             </select>
+                             {/* เปลี่ยนจาก select เป็น input type number */}
+                             <input
+                                type="number"
+                                aria-label="Input Year (BE)"
+                                value={displayYear} // แสดงผลเป็น พ.ศ.
+                                onChange={handleYearChange} // ใช้ handler ใหม่
+                                placeholder="ปี พ.ศ."
+                                min="1" // อาจกำหนดขั้นต่ำที่สมเหตุสมผลกว่านี้ เช่น 2400
+                                step="1"
+                                required
+                                className="form-input" // ใช้ class เดียวกับ input อื่นๆ หรือปรับแต่งตามต้องการ
+                                style={{ minWidth: '100px' }} // กำหนดความกว้างได้ตามเหมาะสม
+                             />
                          </div>
                      </div>
                  </div>
@@ -238,7 +262,7 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
                              className="form-input"
                          />
                          <div className="helper-text">
-                             เดือน {months.find(m => m.value === selectedMonth)?.label ?? '...'} {selectedYear + 543} มี {getDaysInMonth(selectedYear, selectedMonth) || '...'} วัน
+                              เดือน {months.find(m => m.value === selectedMonth)?.label ?? '...'} {displayYear || '...'} มี {getDaysInMonth(selectedYear, selectedMonth) || '...'} วัน
                          </div>
                      </div>
                  </div>
@@ -384,7 +408,7 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
                                                          onClick={() => handleRemoveConstraint(nurse.id, index)}
                                                          className="danger-button"
                                                          style={{ backgroundColor: 'var(--danger)', color: 'white', marginLeft: '10px', padding: '2px 8px', fontSize: '12px' }}
-                                                      >
+                                                     >
                                                           ลบ
                                                      </button>
                                                  </li>
@@ -408,7 +432,7 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
                  className="generate-button"
                  style={{ width: '100%', padding: '15px', fontSize: '18px', marginTop: '20px' }}
                  onClick={handleGenerateSchedule}
-                 disabled={!Array.isArray(nurses) || nurses.length === 0 || selectedMonth === ''}
+                 disabled={!Array.isArray(nurses) || nurses.length === 0 || selectedMonth === '' || selectedYear === '' || isNaN(selectedYear) }
              >
                  <span role="img" aria-label="generate">🚀</span> 4. สร้างตารางเวรสำหรับเดือนที่เลือก
              </button>
