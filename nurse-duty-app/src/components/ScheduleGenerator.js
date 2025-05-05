@@ -13,7 +13,7 @@ const ScheduleGenerator = ({ nurses, onGenerateSchedule, updateNurse }) => {
     const [specificDates, setSpecificDates] = useState('');
     const [nurseConstraintsMap, setNurseConstraintsMap] = useState({});
 
-    const [requiredMorning, setRequiredMorning] = useState(5);
+    const [requiredMorning, setRequiredMorning] = useState(4);
     const [requiredAfternoon, setRequiredAfternoon] = useState(4);
     const [requiredNight, setRequiredNight] = useState(4);
     const [maxConsecShiftsWorked, setMaxConsecShiftsWorked] = useState(6);
