@@ -717,7 +717,7 @@ function App() {
              />
 
              <header className="App-header">
-                 <h1><span role="img" aria-label="nurse-female">👩‍⚕️</span><span role="img" aria-label="calendar">🗓️</span> ระบบจัดการตารางเวรพยาบาล</h1>
+                 <h1><span role="img" aria-label="nurse-female">👩‍⚕️</span><span role="img" aria-label="calendar">🗓️</span>ระบบจัดการตารางเวรพยาบาล</h1>
                  <div className="tabs">
                      <button
                          className={(selectedTab === 'nurses' && !viewingHistoryScheduleId && !showHistoryList) ? 'active' : ''}
