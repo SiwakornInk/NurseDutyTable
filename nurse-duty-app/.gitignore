@@ -56,3 +56,6 @@ Thumbs.db
 .env
 .env*.local
 .env.*
+
+nurse-schedule-backend/serviceAccountKey.json
+serviceAccountKey.json
